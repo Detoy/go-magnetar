@@ -343,8 +343,13 @@ func (w *WebTools) Dispatch(name string, args string) string {
 
 // extractProjectAndMergeRequestFromGitLabURL extracts the project path and merge request ID from a GitLab URL.
 func extractProjectAndMergeRequestFromGitLabURL(url string, baseURL string) (string, string, error) {
-	// Handle URLs with /-/merge_requests/
-	if before, after, ok := strings.Cut(url, "/-/merge_requests/"); ok {
+	// Handle URLs with /-/merge_requests/ and the short /-/mr/ form
+	for _, marker := range []string{"/-/merge_requests/", "/-/mr/"} {
+		before, after, ok := strings.Cut(url, marker)
+		if !ok {
+			continue
+		}
+
 		pathPart := before
 		// Extract project path (remove base URL)
 
@@ -366,32 +371,6 @@ func extractProjectAndMergeRequestFromGitLabURL(url string, baseURL string) (str
 
 		// Extract project path from the URL
 		projectPath := strings.TrimPrefix(pathPart, "/")
-
-		return projectPath, idPart, nil
-	}
-
-	// Handle URLs with /-/
-	if idx := strings.Index(url, "/-/"); idx != -1 {
-		pathPart := url[:idx+2]
-		idPart := url[idx+2:]
-		if idx2 := strings.Index(idPart, "/"); idx2 != -1 {
-			idPart = idPart[:idx2]
-		}
-		if idx2 := strings.Index(idPart, "?"); idx2 != -1 {
-			idPart = idPart[:idx2]
-		}
-		if idx2 := strings.Index(idPart, "#"); idx2 != -1 {
-			idPart = idPart[:idx2]
-		}
-		if idPart == "" {
-			return "", "", fmt.Errorf("merge request ID is empty")
-		}
-
-		// Extract project path
-		projectPath := strings.TrimPrefix(pathPart, "/")
-		if idx2 := strings.Index(projectPath, "/"); idx2 != -1 {
-			projectPath = projectPath[idx2+1:]
-		}
 
 		return projectPath, idPart, nil
 	}
