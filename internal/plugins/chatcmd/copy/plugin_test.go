@@ -1,8 +1,8 @@
 package copyplugin
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"testing"
 
 	"github.com/sashabaranov/go-openai"
@@ -14,13 +14,12 @@ import (
 func TestCopyCommand(t *testing.T) {
 	t.Parallel()
 
-	out = io.Discard
-
 	tests := []struct {
 		name       string
 		messages   []openai.ChatCompletionMessage
+		args       string
 		wantOutput string
-		wantErr    bool
+		wantClip   string
 	}{
 		{
 			name: "copy last assistant message",
@@ -29,15 +28,41 @@ func TestCopyCommand(t *testing.T) {
 				{Role: "assistant", Content: "Hi there!"},
 			},
 			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "Hi there!",
 		},
 		{
-			name: "copy second to last when last is user message",
+			name: "copy index 0 explicitly",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "First"},
+				{Role: "user", Content: "Again"},
+				{Role: "assistant", Content: "Second"},
+			},
+			args:       "0",
+			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "Second",
+		},
+		{
+			name: "copy previous assistant with index 1",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "First"},
+				{Role: "user", Content: "Again"},
+				{Role: "assistant", Content: "Second"},
+			},
+			args:       "1",
+			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "First",
+		},
+		{
+			name: "copy when last message is user still uses last assistant as index 0",
 			messages: []openai.ChatCompletionMessage{
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Response"},
 				{Role: "user", Content: "Another user message"},
 			},
 			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "Response",
 		},
 		{
 			name: "nothing to copy - empty conversation",
@@ -52,36 +77,67 @@ func TestCopyCommand(t *testing.T) {
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: ""},
 			},
-			wantOutput: "Nothing to copy: last assistant message is empty\n",
+			wantOutput: "Nothing to copy: selected assistant message is empty\n",
+		},
+		{
+			name: "index out of range",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Only one"},
+			},
+			args:       "1",
+			wantOutput: "Nothing to copy: only 1 assistant answer(s) in history\n",
+		},
+		{
+			name: "invalid index",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi"},
+			},
+			args:       "nope",
+			wantOutput: "usage: /copy [index] — index must be a non-negative integer (0 = last answer)\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Plugin{}
+			t.Parallel()
 
+			var buf bytes.Buffer
+			var clipped string
+			oldOut, oldWrite := out, writeAll
+			out = &buf
+			writeAll = func(text string) error {
+				clipped = text
+				return nil
+			}
+			t.Cleanup(func() {
+				out = oldOut
+				writeAll = oldWrite
+			})
+
+			p := &Plugin{}
 			mockHub := &mockHub{}
 			if err := p.Init(&plugin.State{}, mockHub); err != nil {
 				t.Fatalf("Init failed: %v", err)
 			}
-
 			cmd := mockHub.lastCommand
 			if cmd == nil {
 				t.Fatal("no command registered")
 			}
 
-			mockAgent := &mockAgent{messages: tt.messages}
-
-			oldOut := out
-			defer func() { out = oldOut }()
-
-			cmdInput := &plugin.ChatCommandInput{
-				AgentHandler: mockAgent,
-				Args:         "",
+			_, err := cmd.Execute(context.Background(), &plugin.ChatCommandInput{
+				AgentHandler: &mockAgent{messages: tt.messages},
+				Args:         tt.args,
+			})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
 			}
-			_, err := cmd.Execute(context.Background(), cmdInput)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Execute() error = %v, wantErr %v", err, tt.wantErr)
+			if got := buf.String(); got != tt.wantOutput {
+				t.Errorf("output = %q, want %q", got, tt.wantOutput)
+			}
+			if tt.wantClip != "" && clipped != tt.wantClip {
+				t.Errorf("clipboard = %q, want %q", clipped, tt.wantClip)
 			}
 		})
 	}
@@ -91,42 +147,22 @@ type mockAgent struct {
 	messages []openai.ChatCompletionMessage
 }
 
-func (a *mockAgent) Messages() []openai.ChatCompletionMessage {
-	return a.messages
-}
-
+func (a *mockAgent) Messages() []openai.ChatCompletionMessage { return a.messages }
 func (a *mockAgent) SetMessages(msgs []openai.ChatCompletionMessage) {
 	a.messages = msgs
 }
-
-func (a *mockAgent) Config() *config.Config {
-	return nil
-}
-
-func (a *mockAgent) Compact() error {
-	return nil
-}
-
-func (a *mockAgent) Reset() {
-}
-
-func (a *mockAgent) Reconfigure() {
-}
+func (a *mockAgent) Config() *config.Config { return nil }
+func (a *mockAgent) Compact() error         { return nil }
+func (a *mockAgent) Reset()                 {}
+func (a *mockAgent) Reconfigure()           {}
 
 type mockHub struct {
 	lastCommand *plugin.ChatCommand
 }
 
-func (h *mockHub) RegisterChatCommand(cmd plugin.ChatCommand) {
-	h.lastCommand = &cmd
-}
-
-func (h *mockHub) RegisterTool(tool plugin.LLMTool) {}
-
-func (h *mockHub) RegisterCLICommand(cmd any) {}
-
+func (h *mockHub) RegisterChatCommand(cmd plugin.ChatCommand)      { h.lastCommand = &cmd }
+func (h *mockHub) RegisterTool(tool plugin.LLMTool)                {}
+func (h *mockHub) RegisterCLICommand(cmd any)                      {}
 func (h *mockHub) RegisterPreprocessor(fn plugin.PreprocessorFunc) {}
-
-func (h *mockHub) Go(f func(context.Context)) {}
-
-func (h *mockHub) Stop() {}
+func (h *mockHub) Go(f func(context.Context))                      {}
+func (h *mockHub) Stop()                                           {}
