@@ -3,6 +3,7 @@ package copyplugin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/sashabaranov/go-openai"
@@ -65,6 +66,43 @@ func TestCopyCommand(t *testing.T) {
 			wantClip:   "Response",
 		},
 		{
+			name: "skips assistant tool call message after the answer",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Answer"},
+				{Role: "user", Content: "Search something"},
+				{Role: "assistant", ToolCalls: []openai.ToolCall{toolCall("call_1")}},
+				{Role: "tool", Content: "tool result", ToolCallID: "call_1"},
+			},
+			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "Answer",
+		},
+		{
+			name: "tool call messages do not count towards index",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "First"},
+				{Role: "user", Content: "Search something"},
+				{Role: "assistant", ToolCalls: []openai.ToolCall{toolCall("call_1")}},
+				{Role: "tool", Content: "tool result", ToolCallID: "call_1"},
+				{Role: "assistant", Content: "Let me check more", ToolCalls: []openai.ToolCall{toolCall("call_2")}},
+				{Role: "tool", Content: "tool result", ToolCallID: "call_2"},
+				{Role: "assistant", Content: "Second"},
+			},
+			args:       "1",
+			wantOutput: "Answer copied to clipboard\n",
+			wantClip:   "First",
+		},
+		{
+			name: "only tool call assistant messages",
+			messages: []openai.ChatCompletionMessage{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", ToolCalls: []openai.ToolCall{toolCall("call_1")}},
+				{Role: "tool", Content: "tool result", ToolCallID: "call_1"},
+			},
+			wantOutput: "Nothing to copy: no conversation history\n",
+		},
+		{
 			name: "nothing to copy - empty conversation",
 			messages: []openai.ChatCompletionMessage{
 				{Role: "user", Content: "Hello"},
@@ -99,10 +137,9 @@ func TestCopyCommand(t *testing.T) {
 		},
 	}
 
+	// Subtests run sequentially because they swap the package-level out and writeAll.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
 			var buf bytes.Buffer
 			var clipped string
 			oldOut, oldWrite := out, writeAll
@@ -140,6 +177,49 @@ func TestCopyCommand(t *testing.T) {
 				t.Errorf("clipboard = %q, want %q", clipped, tt.wantClip)
 			}
 		})
+	}
+}
+
+func TestParseCopyIndex(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		args    string
+		want    int
+		wantErr error
+	}{
+		{args: "", want: 0},
+		{args: "  ", want: 0},
+		{args: "0", want: 0},
+		{args: " 2 ", want: 2},
+		{args: "nope", wantErr: ErrInvalidIndex},
+		{args: "-1", wantErr: ErrInvalidIndex},
+		{args: "1.5", wantErr: ErrInvalidIndex},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.args, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseCopyIndex(tt.args)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("parseCopyIndex(%q) error = %v, want %v", tt.args, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("parseCopyIndex(%q) = %d, want %d", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func toolCall(id string) openai.ToolCall {
+	return openai.ToolCall{
+		ID:   id,
+		Type: openai.ToolTypeFunction,
+		Function: openai.FunctionCall{
+			Name:      "search",
+			Arguments: `{"query":"something"}`,
+		},
 	}
 }
 

@@ -14,7 +14,7 @@ go-magnetar provides several built-in chat commands accessible from the interact
 | `/index` | `/i` | Index file or URL into RAG knowledge base (auto-detects URL vs file) |
 | `/idxtab` | — | Index multiple files/URLs from a JSON lines file (one per line, format: `{"source":"path\|url","message":"text"}`) |
 | `/write` | `/w` | Write content to a file |
-| `/copy` | `/c` | Copy the last assistant answer to clipboard |
+| `/copy [index]` | `/c` | Copy an assistant answer to clipboard (default: the last one) |
 | `/readonly` | — | Toggle read-only mode (blocks all modification operations) |
 | `/fetch` | `/f` | Fetch content from a URL, optionally save to file |
 | `/confluence.edit` | — | Edit a Confluence page using Markdown content from a file |
@@ -58,6 +58,37 @@ confluence:
 ```
 
 See [docs/security.md](./security.md) for Confluence security considerations.
+
+## /copy Command
+
+Copy an assistant answer from the current conversation to the clipboard:
+
+```
+> /copy
+Answer copied to clipboard
+```
+
+The optional `index` selects which answer to copy, counting back from the most recent one:
+
+| Index | Answer |
+|---|---|
+| `0` (default) | The last answer |
+| `1` | The answer before the last one |
+| `n` | The answer `n` steps back |
+
+```
+> /copy 1
+Answer copied to clipboard
+```
+
+Only answers shown to the user are counted. Intermediate assistant messages that request tool calls are skipped, so they never take up an index.
+
+If the index is not a non-negative integer, the command prints its usage. If the index is larger than the number of answers in the history, nothing is copied:
+
+```
+> /copy 5
+Nothing to copy: only 2 assistant answer(s) in history
+```
 
 ## /profile Command
 

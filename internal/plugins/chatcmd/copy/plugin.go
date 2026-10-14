@@ -2,6 +2,7 @@ package copyplugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,11 @@ import (
 	"github.com/sashabaranov/go-openai"
 
 	"github.com/wmentor/go-magnetar/internal/plugin"
+)
+
+var (
+	// ErrInvalidIndex is returned when the /copy argument is not a non-negative integer.
+	ErrInvalidIndex = errors.New("usage: /copy [index] — index must be a non-negative integer (0 = last answer)")
 )
 
 func init() {
@@ -66,11 +72,13 @@ func (p *Plugin) Init(_ *plugin.State, hub plugin.Hub) error {
 	return nil
 }
 
-// assistantAnswers returns assistant message contents newest-first (index 0 = last answer).
+// assistantAnswers returns the contents of assistant answers shown to the user,
+// newest-first (index 0 = last answer). Assistant messages that carry tool calls
+// are intermediate steps, not answers, so they are skipped.
 func assistantAnswers(msgs []openai.ChatCompletionMessage) []string {
 	var out []string
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" {
+		if msgs[i].Role == openai.ChatMessageRoleAssistant && len(msgs[i].ToolCalls) == 0 {
 			out = append(out, msgs[i].Content)
 		}
 	}
@@ -84,7 +92,7 @@ func parseCopyIndex(args string) (int, error) {
 	}
 	n, err := strconv.Atoi(args)
 	if err != nil || n < 0 {
-		return 0, fmt.Errorf("usage: /copy [index] — index must be a non-negative integer (0 = last answer)")
+		return 0, ErrInvalidIndex
 	}
 	return n, nil
 }

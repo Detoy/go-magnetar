@@ -236,7 +236,7 @@ The agent will now search the knowledge base before answering any question.
 | `/exit` | `/quit` | Exit the program |
 | `/index <path\|url>` | `/i` | Index a file or URL into the knowledge base |
 | `/fetch <url> [file]` | `/f` | Fetch URL content, display or save to file |
-| `/copy` | `/c` | Copy the last answer to clipboard |
+| `/copy [index]` | `/c` | Copy an answer to clipboard (default: the last one) |
 | `/write <file>` | `/w` | Write last answer to a file |
 | `/new` | — | Clear conversation history and start fresh |
 | `/compact` | — | Compress conversation history immediately |
